@@ -1,39 +1,35 @@
 <?php
+
 namespace Zoomx;
 
 use modParser;
 use modX;
-use MODX\Revolution\modRequest as modRequest;
-use MODX\Revolution\modResponse as modResponse;
+use modRequest;
+use modResponse;
 use Zoomx\Json\Response as JsonResponse;
 use Zoomx\Contracts\ParserInterface;
 use Zoomx\Support\ContentTypeDetector;
 use Zoomx\Support\ElementService;
 use Zoomx\Support\Macroable;
 
-
 class Service
 {
     use Macroable;
 
-    const ROUTING_DISABLED = 0;
-    const ROUTING_SOFT     = 1;
-    const ROUTING_STRICT   = 2;
+    public const ROUTING_DISABLED = 0;
+    public const ROUTING_SOFT     = 1;
+    public const ROUTING_STRICT   = 2;
 
     /** @var Service */
     protected static $instance;
+
+    protected $container;
     /** @var modX  */
     protected $modx;
-    /** @var ParserInterface */
-    protected $parser;
-    /** @var Response */
-    protected $response;
-    /** @var Request */
-    protected $request;
-    /** @var ElementService */
-    protected $elementService;
     /** @var array */
-    protected $exceptions = [];
+    private $instances = [];
+    /** @var array */
+    private $exceptions = [];
 
 
     /**
@@ -54,35 +50,16 @@ class Service
             $exceptionHandler = $this->getExceptionHandler();
             set_exception_handler([$exceptionHandler, 'handle']);
         }
-
         // Register the session_write_close function
         session_register_shutdown();
 
         if ($modx->getOption('zoomx_enable_pdotools_adapter', null, false)) {
             $this->preparePdoToolsAdapter();
         }
-        // Fire the event.
-        $modx->invokeEvent('onZoomxInit');
-    }
 
-    private function getExceptionHandler()
-    {
-        $exceptionHandlerClass = $this->modx->getOption('zoomx_exception_handler_class', null, ExceptionHandler::class, true);
-
-        return new $exceptionHandlerClass($this->modx, $this->getRequest()->getRequestHandler());
-    }
-
-    private function loadExceptions()
-    {
-        $this->exceptions = require dirname(__DIR__) . '/config/exceptions.php';
-        $customFile = MODX_CORE_PATH . MODX_CONFIG_KEY . '/exceptions.php';
-        if (file_exists($customFile)) {
-            $customExceptions = require $customFile;
-        }
-        if (!empty($customExceptions) && is_array($customExceptions)) {
-            foreach ($customExceptions as $code => $class) {
-                $this->exceptions[$code] = $class;
-            }
+        // Load modResponse class
+        if (!class_exists('modResponse')) {
+            require_once  MODX_CORE_PATH . 'model/modx/modresponse.class.php';
         }
     }
 
@@ -98,13 +75,43 @@ class Service
         return self::$instance;
     }
 
+    public function initialize()
+    {
+        if ($this->modx->context->key !== 'mgr' && PHP_SAPI  !== 'cli' && (!defined('MODX_API_MODE') || !MODX_API_MODE)) {
+            $this->modx->request = $this->shouldBeJson() ? $this->getJsonRequest() : $this->getRequest();
+            // Load element service
+            $elService = $this->getElementService();
+            // Fire the event.
+            $this->modx->invokeEvent('OnZoomxInit', ['zoomx' => $this]);
+        }
+
+        return $this;
+    }
+
+    /**
+     * @return \Zoomx\Cache\CacheManager
+     */
+    public function getCacheManager()
+    {
+        if (!isset($this->instances['cacheManager'])) {
+            $cacheManagerClass = $this->modx->getOption('zoomx_cache_manager_class', null, Cache\CacheManager::class, true);
+            if (class_exists($cacheManagerClass)) {
+                $this->instances['cacheManager'] = $cacheManagerClass::getInstance($this->modx);
+            } else {
+                throw new \InvalidArgumentException("[ZoomX] Specified cache manager class $cacheManagerClass not found.");
+            }
+        }
+
+        return $this->instances['cacheManager'];
+    }
+
     /**
      * @return ParserInterface|modParser
      * @throws \ReflectionException
      */
     public function getParser()
     {
-        if (!isset($this->parser)) {
+        if (!isset($this->instances['parser'])) {
             $parserClass = $this->modx->getOption('zoomx_parser_class', null, Smarty::class, true);
             if ($parserClass === 'ZoomSmarty' || ltrim($parserClass, '\\') === Smarty::class) {
                 class_exists(\Smarty::class) or require MODX_CORE_PATH . 'model/smarty/Smarty.class.php';
@@ -113,14 +120,14 @@ class Service
                 }
             }
             if (class_exists($parserClass) && $this->checkImplements($parserClass, ParserInterface::class)) {
-                $this->parser = new $parserClass($this->modx, $this);
+                $this->instances['parser'] = new $parserClass($this->modx, $this);
             } else {
                 $message = $this->modx->lexicon('zoomx_parser_implement_error');
                 die($message);
             }
         }
 
-        return $this->parser;
+        return $this->instances['parser'];
     }
 
     /**
@@ -140,18 +147,15 @@ class Service
      */
     public function getResponse($class = null, ...$params)
     {
-        if (!isset($this->response) || (is_string($class) && !$this->response instanceof $class)) {
-            if (!class_exists('modResponse')) {
-                require  MODX_CORE_PATH . 'src/Revolution/modResponse.php';
-            }
+        if (!isset($this->instances['response']) || (is_string($class) && !$this->response instanceof $class)) {
             if (!class_exists('ZoomResponse')) {
                 class_alias(Response::class, 'ZoomResponse');
             }
             $responseClass = $class ?? $this->modx->getOption('zoomx_response_class', null, 'ZoomResponse', true);
-            $this->response = new $responseClass($this->modx, ...$params);
+            $this->instances['response'] = new $responseClass($this->modx, ...$params);
         }
 
-        return $this->response;
+        return $this->instances['response'];
     }
 
     /**
@@ -181,18 +185,18 @@ class Service
      */
     public function getRequest($class = null)
     {
-        if (!isset($this->request) || (is_string($class) && !$this->request instanceof $class)) {
+        if (!isset($this->instances['request']) || (is_string($class) && !$this->request instanceof $class)) {
             if (!class_exists('modRequest')) {
-                require MODX_CORE_PATH . 'src/Revolution/modRequest.php';
+                require MODX_CORE_PATH . 'model/modx/modrequest.class.php';
             }
             if (!class_exists('ZoomRequest')) {
                 class_alias(Request::class, 'ZoomRequest');
             }
             $requestClass = $class ?? $this->modx->getOption('zoomx_request_class', null, Request::class, true);
-            $this->request = new $requestClass($this->modx);
+            $this->instances['request'] = new $requestClass($this->modx);
         }
 
-        return $this->request;
+        return $this->instances['request'];
     }
 
     /**
@@ -235,7 +239,7 @@ class Service
      */
     public function getRedirectResponse($url, $status = 302, array $headers = [])
     {
-        $class = $this->modx->getOption('zoomx_file_response_class', null, RedirectResponse::class);
+        $class = $this->modx->getOption('zoomx_redirect_response_class', null, RedirectResponse::class);
 
         return $this->getResponse($class, $url, $status, $headers);
     }
@@ -245,12 +249,22 @@ class Service
      */
     public function getElementService()
     {
-        if (!isset($this->elementService)) {
+        if (!isset($this->instances['elementService'])) {
             $class = $this->modx->getOption('zoomx_element_service_class', null, ElementService::class, true);
-            $this->elementService = new $class($this->modx);
+            $this->instances['elementService'] = new $class($this->modx);
         }
 
-        return $this->elementService;
+        return $this->instances['elementService'];
+    }
+
+    public function getRouter()
+    {
+        if (!isset($this->instances['router'])) {
+            $class = $this->modx->getOption('zoomx_router_class', null, Routing\Router::class, true);
+            $this->instances['router'] = new $class($this->modx);
+        }
+
+        return $this->instances['router'];
     }
 
     public function getView(string $name, array $data)
@@ -266,8 +280,8 @@ class Service
      */
     public function shouldBeJson()
     {
-        return (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false) ||
-               (isset($_SERVER['Content-Type']) &&  strpos($_SERVER['Content-Type'], 'application/json') !== false);
+        return (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+            || (isset($_SERVER['CONTENT_TYPE']) && strpos($_SERVER['CONTENT_TYPE'], 'application/json') !== false);
     }
 
     /**
@@ -399,71 +413,165 @@ class Service
         return $this;
     }
 
+    public function getConfigPath()
+    {
+        return $this->config('zoomx_config_path') ?: $this->modx->getOption('core_path') . MODX_CONFIG_KEY . '/';
+    }
+    /**
+     * Return Composer autoloader.
+     */
+    public function getLoader()
+    {
+        if (!($loader = include(__DIR__ . '/../vendor/autoload.php'))) {
+            $this->abort(500, 'Composer is not set.');
+        }
+
+        return $loader;
+    }
+
     /**
      * @param string $className
-     * @return false
+     * @return bool
      * @throws \ReflectionException
      */
     protected function checkImplements($className, $interface)
     {
-        $class = new \ReflectionClass( $className );
-        if( false === $class ) {
-            return false;
-        }
+        $class = new \ReflectionClass($className);
         $interfaces = $class->getInterfaceNames();
 
         return is_array($interfaces) && in_array($interface, $interfaces);
     }
 
     /**
-     * Get a property.
+     * Get an instance.
      *
-     * @param  string  $property
+     * @param  string $name
      * @return mixed
      */
-    public function __get($property)
+    public function get($name)
     {
-        $method = 'get' . ucfirst($property);
+        if (isset($this->instances[$name])) {
+            return $this->instances[$name];
+        }
+
+        $method = 'get' . ucfirst($name);
 
         return method_exists($this, $method) ? $this->$method() : null;
+    }
+
+    /**
+     * Get an instance.
+     *
+     * @param  string $name
+     * @return mixed
+     */
+    public function __get($name)
+    {
+        return $this->get($name);
+    }
+
+    /**
+     * Set an instance.
+     *
+     * @param  string|array $name
+     * @param mixed $value
+     * @return $this
+     */
+    public function set($name, $value = null)
+    {
+        if (is_array($name)) {
+            foreach ($name as $key => $val) {
+                $this->instances[$key] = $val;
+            }
+        } else {
+            $this->instances[$name] = $value;
+        }
+
+        return $this;
+    }
+
+    /**
+     * Set an instance.
+     *
+     * @param  string  $name
+     * @param mixed $value
+     * @return $this
+     */
+    public function __set($name, $value = null)
+    {
+        return $this->set($name, $value);
+    }
+
+    /**
+     * @param string $name
+     * @return bool
+     */
+    public function __isset($name)
+    {
+        return isset($this->instances[$name]);
     }
 
     /**
      * Replacement for modX::getChunk() method.
      * @param string $name
      * @param array $properties
+     * @param array|int $cacheOptions
      * @return string
      * @throws \SmartyException|\ReflectionException
      */
-    public function getChunk(string $name, array $properties = [])
+    public function getChunk(string $name, array $properties = [], $cacheOptions = [])
     {
-        return $this->getElementService()->getChunk($name, $properties);
+        return $this->getElementService()->getChunk($name, $properties, $cacheOptions);
     }
 
     /**
      * Replacement for modX::snippet() method.
      * @param string $name
      * @param array $properties
+     * @param array|int $cacheOptions Cache options or cache lifetime in seconds
      * @return mixed
      */
-    public function runSnippet(string $name, array $properties = [])
+    public function runSnippet(string $name, array $properties = [], $cacheOptions = [])
     {
-        return $this->getElementService()->runSnippet($name, $properties);
+        return $this->get('elementService')->runSnippet($name, $properties, $cacheOptions);
     }
 
     /**
      * Executes a file like a snippet.
      * @param string $name
      * @param array $scriptProperties
+     * @param array|int $cacheOptions Cache options or cache lifetime in seconds.
      * @return mixed
      */
-    public function runFileSnippet(string $name, array $scriptProperties)
+    public function runFileSnippet(string $name, array $scriptProperties, $cacheOptions = [])
     {
-        return $this->getElementService()->runFileSnippet($name, $scriptProperties);
+        return $this->get('elementService')->runFileSnippet($name, $scriptProperties, $cacheOptions);
+    }
+
+    private function getExceptionHandler()
+    {
+        $exceptionHandlerClass = $this->modx->getOption('zoomx_exception_handler_class', null, ExceptionHandler::class, true);
+
+        return new $exceptionHandlerClass($this->modx);
+    }
+
+    private function loadExceptions()
+    {
+        $this->exceptions = require dirname(__DIR__) . '/config/exceptions.php';
+        $customFile =  $this->getConfigPath() . 'exceptions.php';
+        if (file_exists($customFile)) {
+            $customExceptions = require $customFile;
+        }
+        if (!empty($customExceptions) && is_array($customExceptions)) {
+            foreach ($customExceptions as $code => $class) {
+                $this->exceptions[$code] = $class;
+            }
+        }
     }
 
     private function preparePdoToolsAdapter(): void
     {
+        $corePath = $this->modx->getOption('zoomx_core_path', null, MODX_CORE_PATH . 'components/zoomx/');
         if (!class_exists('pdoTools')) {
             $class = $this->modx->getOption('pdoTools.class', null, 'pdotools.pdotools', true);
             $path = $this->modx->getOption('pdotools_class_path', null, MODX_CORE_PATH . 'components/pdotools/model/', true);
@@ -476,20 +584,16 @@ class Service
         }
         if (class_exists('pdoTools')) {
             $this->modx->setOption('pdoTools.class', 'pdoToolsZoomx');
-            $this->modx->setOption('pdotools_class_path', MODX_CORE_PATH . 'components/zoomx/pdotools/');
+            $this->modx->setOption('pdotools_class_path', $corePath . 'pdotools/');
         } else {
             $this->modx->log(\modX::LOG_LEVEL_ERROR, '[pdoToolsZoomx] pdoTools class is not found.');
         }
         if (class_exists('pdoFetch')) {
             $this->modx->setOption('pdoFetch.class', 'pdoFetchZoomx');
-            $this->modx->setOption('pdofetch_class_path', MODX_CORE_PATH . 'components/zoomx/pdotools/');
+            $this->modx->setOption('pdofetch_class_path', $corePath . 'pdotools/');
         } else {
             $this->modx->log(\modX::LOG_LEVEL_ERROR, '[pdoFetchZoomx] pdoFetch class is not found.');
         }
-        include MODX_CORE_PATH . 'components/zoomx/pdotools/pdotoolsadapter.php';
+        include $corePath . 'pdotools/pdotoolsadapter.php';
     }
-
-    private function __clone() {}
-
-    private function __wakeup() {}
 }

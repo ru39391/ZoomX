@@ -1,7 +1,7 @@
 <?php
 namespace Zoomx;
 
-use MODX\Revolution\modResponse as modResponse;
+use modResponse;
 use modStaticResource;
 use modX;
 
@@ -26,14 +26,18 @@ class Response extends modResponse
 
         if (!$this->contentType->get('binary')) {
             $zervice = zoomx();
+            $parser = $zervice->getParser();
             if ($zervice->getRequest()->hasRoute()) {
-                $this->modx->resource->_output = $zervice->getParser()->process($this->modx->resource);
+                // File template
+                $this->modx->resource->_output = $parser->process($this->modx->resource);
             } elseif ($zervice->config('zoomx_use_zoomx_parser_as_default', false)) {
-                $this->getTemplateContent();
-                $this->modx->resource->_output = !empty($this->modx->resource->_content) ?
-                    $zervice->getParser()->parse($this->modx->resource->_content) :
-                    $this->modx->resource->getContent();
-                $this->modx->resource->setProcessed(true);
+                // DB template
+//                $this->getTemplateContent();
+//                $this->modx->resource->_output = !empty($this->modx->resource->_content)
+//                    ? $parser->parse($this->modx->resource->_content)
+//                    : $parser->parse($this->modx->resource->getContent());
+//                $this->modx->resource->setProcessed(true);
+                $this->modx->resource->_output = $parser->processResource($this->modx->resource);
             } else {
                 $this->modx->resource->prepare();
             }
@@ -138,7 +142,7 @@ class Response extends modResponse
         if (!$resource->_processed) {
             $resource->_output = '';
             if (empty($resource->_content)) {
-                /** @var modTemplate $baseElement */
+                /** @var \modTemplate $baseElement */
                 if ($resource->get('template') && $baseElement = $resource->getOne('Template')) {
                     $resource->_content = $baseElement->getContent();
                 }

@@ -2,7 +2,7 @@
 namespace Zoomx;
 
 use modX;
-use MODX\Revolution\modRequest as modRequest;
+use modRequest;
 use Zoomx\DTO\Error as ErrorData;
 
 
@@ -75,6 +75,10 @@ class Request extends modRequest
         } else {
             $this->checkPublishStatus();
             $this->modx->resourceIdentifier = $this->handler->getResourceIdentifier();
+        }
+
+        if (isset($this->modx->response) && $this->modx->response instanceof RedirectResponse) {
+            $this->modx->response->outputContent();
         }
 
         $this->modx->beforeRequest();
@@ -190,9 +194,9 @@ class Request extends modRequest
         $this->handler->sendErrorPage($e);
     }
 
-    private function isApiMode()
+    protected function isApiMode()
     {
-        return  ($this->modx->response && $this->modx->response instanceof Json\ResponseInterface) ||
-                (defined('ZOOMX_API_MODE') && ZOOMX_API_MODE === true);
+        return  ($this->modx->response && $this->modx->response instanceof Contracts\Json\ResponseInterface) ||
+            (defined('ZOOMX_API_MODE') && ZOOMX_API_MODE === true);
     }
 }

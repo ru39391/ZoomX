@@ -1,7 +1,7 @@
 <?php
 namespace Zoomx;
 
-use MODX\Revolution\modResponse as modResponse;
+use modResponse;
 use modX;
 use SplFileInfo;
 use Zoomx\Support\Repository;

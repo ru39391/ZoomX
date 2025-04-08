@@ -2,7 +2,7 @@
 namespace Zoomx\Json;
 
 use modX;
-use MODX\Revolution\modRequest as modRequest;
+use modRequest;
 use Zoomx\Exceptions\ServiceUnavailableHttpException;
 use Zoomx\Service;
 
@@ -12,6 +12,8 @@ class Request extends modRequest
     protected $handler;
     /** @var array  */
     protected $routeParams = [];
+    /** @var bool  */
+    protected $hasRoute = false;
 
     /**
      * @param modX $modx A reference to the modX instance
@@ -85,5 +87,19 @@ class Request extends modRequest
             $this->handler = new $class($this->modx);
         }
         return $this->handler;
+    }
+
+    /**
+     * @var bool|null $value
+     * @return bool|$this;
+     */
+    public function hasRoute($value = null)
+    {
+        if (!is_bool($value)) {
+            return $this->hasRoute;
+        }
+        $this->hasRoute = $value;
+
+        return $this;
     }
 }

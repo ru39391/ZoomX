@@ -1,8 +1,9 @@
 <?php
 namespace Zoomx;
 
+
 use InvalidArgumentException;
-use modResponse;
+use MODX\Revolution\modResponse as modResponse;
 use modX;
 use Zoomx\Support\Repository;
 
@@ -34,23 +35,18 @@ class RedirectResponse extends modResponse
      *
      * @throws InvalidArgumentException
      */
-    public function __construct(modX $modx, string $url = '', int $status = 0, array $headers = [])
+    public function __construct($modx, $url, $status = 302, array $headers = [])
     {
         parent::__construct($modx);
 
-        $routeParams = zoomx('router')->getRouteParams();
-
-        $url = $url ?: @$routeParams['redirect']['targetUrl'];
         $this->setTargetUrl($url);
-
-        if (!empty($status)) {
-            $this->statusCode = $status;
-        } else {
-            $this->statusCode = $routeParams['redirect']['status'] ?? $this->statusCode;
+        if ($status < 100 || $status >= 600) {
+            throw new InvalidArgumentException('The HTTP status code "' . $status . '" is not valid.');
         }
+        $this->statusCode = $status;
 
         if (!$this->isRedirectStatus()) {
-            throw new InvalidArgumentException($modx->lexicon('zoomx_wrong_redirect_status', ['status' => $this->statusCode]));
+            throw new InvalidArgumentException('The HTTP status code is not a redirect ("' . $status . '" given).');
         }
 
         $this->headers = new Repository();
@@ -81,7 +77,7 @@ class RedirectResponse extends modResponse
     public function setTargetUrl($url)
     {
         if (empty($url)) {
-            throw new InvalidArgumentException($this->modx->lexicon('zoomx_redirect_to_empty_url'));
+            throw new InvalidArgumentException('Cannot redirect to an empty URL.');
         }
 
         $this->targetUrl = $url;
@@ -103,10 +99,6 @@ class RedirectResponse extends modResponse
      */
     public function outputContent(array $options = [])
     {
-        $this->parseTagretUrl();
-        if (empty($this->targetUrl)) {
-            throw new InvalidArgumentException('Cannot redirect to an empty URL.');
-        }
         $this->sendHeaders();
         $this->sendRedirect($this->targetUrl, ['responseCode' => $this->getResponseHeader()]);
     }
@@ -135,18 +127,5 @@ class RedirectResponse extends modResponse
         }
 
         return $this;
-    }
-
-    protected function parseTagretUrl()
-    {
-
-        foreach (zoomx('router')->getRouteVars() as $var => $value) {
-            $this->targetUrl = str_replace('{$' . $var . '}', $value, $this->targetUrl);
-        }
-    }
-
-    public function __invoke()
-    {
-        $this->outputContent();
     }
 }

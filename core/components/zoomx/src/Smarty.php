@@ -33,11 +33,10 @@ class Smarty extends BaseSmarty implements Contracts\ParserInterface
         $this->cache_dir = $cachePath . ltrim($modx->getOption('zoomx_smarty_cache_dir', null, 'zoomx/smarty/cache/'), '/');
         $this->compile_dir = $cachePath . ltrim($modx->getOption('zoomx_smarty_compile_dir', null, 'zoomx/smarty/compiled/'), '/');
         $this->setConfigDir($modx->getOption('zoomx_smarty_config_dir', null, $corePath . 'config/'));
-        $this->createDir([$this->cache_dir, $this->compile_dir]);
 
         // Set caching mode
-        $this->caching = $modx->getOption('zoomx_caching', null, true)
-            ? BaseSmarty::CACHING_LIFETIME_SAVED
+        $this->caching = $modx->getOption('cache_resource', null, true)
+            ? $modx->getOption('zoomx_caching', null, Smarty::CACHING_LIFETIME_CURRENT)
             : BaseSmarty::CACHING_OFF;
         $this->cache_lifetime = (int)$modx->getOption('cache_resource_expires', null, 0);
         $this->cache_lifetime = $this->cache_lifetime > 0 ? $this->cache_lifetime : -1;
@@ -74,22 +73,12 @@ class Smarty extends BaseSmarty implements Contracts\ParserInterface
         $this->registerDefaultPluginHandler([$this, 'loadDefaultPluginHandler']);
     }
 
-    protected function createDir($dir)
-    {
-        $paths = (array)$dir;
-        foreach ($paths as $path) {
-            if (!is_dir($path)) {
-                $this->modx->getCacheManager()->writeTree($path);
-            }
-        }
-    }
-
     protected function getSecurityClass($corePath)
     {
         if ($securityClass = $this->modx->getOption('zoomx_smarty_security_class', null, '')) {
             $FQN = $corePath . "smarty/security/$securityClass.php";
             if (!file_exists($FQN)) {
-                $this->modx->log(MODX_LOG_LEVEL_ERROR, "Class $securityClass not found.");
+                $this->modx->log(modX::LOG_LEVEL_ERROR, "Class $securityClass not found.");
             } else {
                 include $FQN;
             }
@@ -174,11 +163,8 @@ class Smarty extends BaseSmarty implements Contracts\ParserInterface
                 $baseElement = $resource->getOne('Template');
                 $resource->_content = isset($baseElement) ? $baseElement->getContent() : $resource->getContent();
             }
-            $caching = $this->caching && $resource->cacheable && $resource->id > 0;
-            $cacheId = "doc_" . $resource->id;
-
             if (!empty($resource->_content)) {
-                $content = $this->parse($resource->_content, [], false, [$caching, $cacheId]);
+                $content = $this->parse($resource->_content);
             }
             $resource->setProcessed(true);
         } else {
@@ -190,20 +176,19 @@ class Smarty extends BaseSmarty implements Contracts\ParserInterface
     /**
      * {@inheritDoc}
      */
-    public function parse($string, array $properties = [], $isFile = false, array $options = [])
+    public function parse($string, array $properties = [], $isFile = false)
     {
         if (empty($string)) {
             return '';
         }
-        [$caching, $cache_id] = $options;
         if (!$isFile) {
             $string = 'string:' . $string;
         }
-        $tmpl = $this->createTemplate($string, $cache_id);
+        $tmpl = $this->createTemplate($string);
         if (!empty($properties)) {
             $tmpl->assign($properties);
         }
-        $tmpl->caching = $caching;  // BaseSmarty::CACHING_OFF;
+        $tmpl->caching = BaseSmarty::CACHING_OFF;
 
         return $tmpl->fetch();
     }
